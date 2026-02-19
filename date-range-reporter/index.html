@@ -840,6 +840,15 @@
             </div>
             <div class="toggle-row">
               <div class="toggle-content">
+                <label for="includeMissedRecurring">Include missed recurring tasks</label>
+              </div>
+              <label class="toggle-switch">
+                <input type="checkbox" id="includeMissedRecurring" style="display: none;" />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
+            <div class="toggle-row">
+              <div class="toggle-content">
                 <label for="showTimeSpent">Show time spent</label>
               </div>
               <label class="toggle-switch">
@@ -990,6 +999,7 @@
         showDate: false,
         excludeEmptyDates: true,
         includeNotes: false,
+        includeMissedRecurring: false,
         minTimeSpent: 5,
         showTimeSpent: true,
         showTotalTime: true,
@@ -1002,6 +1012,8 @@
       sevenDaysAgo.setDate(today.getDate() - 6);
       startDateInput.valueAsDate = sevenDaysAgo;
       endDateInput.valueAsDate = today;
+
+      // Constants
 
       // Format date as YYYY-MM-DD
       function formatDate(date) {
@@ -1161,6 +1173,40 @@
         return preferences.excludedProjects.includes(projectId || 'no-project');
       }
 
+      // Get missed recurring tasks (tasks with repeatCfgId that weren't worked on in date range)
+      function getMissedRecurringTasks(allTasks, startDate, endDate, processedTasks) {
+        const missedTasks = [];
+        const startDateStr = formatDate(startDate);
+        const endDateStr = formatDate(endDate);
+        
+        allTasks.forEach(task => {
+          // Skip if task was already processed (completed or had work logs in range)
+          if (processedTasks.has(task.id)) {
+            return;
+          }
+          
+          // Skip if task doesn't have a repeatCfgId (not a recurring task)
+          if (!task.repeatCfgId) {
+            return;
+          }
+          
+          // Skip tasks from excluded projects
+          if (isProjectExcluded(task.projectId)) {
+            return;
+          }
+          
+          // Skip subtasks (they're shown under their parent)
+          if (task.parentId) {
+            return;
+          }
+          
+          // This is a recurring task that wasn't completed or worked on in the date range
+          missedTasks.push(task);
+        });
+        
+        return missedTasks;
+      }
+
       // Generate report grouped by date
       function generateReportByDate(allTasks, startDate, endDate, projects) {
         const tasksByDate = {};
@@ -1318,6 +1364,24 @@
           }
         });
 
+        // Add missed recurring tasks to each date if enabled
+        const includeMissedRecurring = document.getElementById('includeMissedRecurring').checked;
+        if (includeMissedRecurring) {
+          const missedTasks = getMissedRecurringTasks(allTasks, startDate, endDate, processedTasks);
+          
+          // Add each missed recurring task to each date in the range
+          if (missedTasks.length > 0) {
+            dateRange.forEach(dateStr => {
+              missedTasks.forEach(task => {
+                tasksByDate[dateStr].push({
+                  ...task,
+                  isMissedRecurring: true
+                });
+              });
+            });
+          }
+        }
+
         // Generate report in Markdown format
         let reportText = `# Task Completion Report\n\n`;
         reportText += `**Date Range:** ${formatDateDisplay(formatDate(startDate))} - ${formatDateDisplay(formatDate(endDate))}  \n`;
@@ -1352,8 +1416,13 @@
               const timeSpent = (document.getElementById('showTimeSpent').checked && task.timeSpentOnDay && task.timeSpentOnDay[dateForTimeSpent])
                 ? ` *(${Math.round(task.timeSpentOnDay[dateForTimeSpent] / 60000)} min)*`
                 : '';
-              // Show status indicator for in-progress tasks
-              const statusIndicator = task.isInProgress ? ' WIP' : '';
+              // Show status indicator for in-progress tasks or missed recurring tasks
+              let statusIndicator = '';
+              if (task.isMissedRecurring) {
+                statusIndicator = ' MISSED 🔁';
+              } else if (task.isInProgress) {
+                statusIndicator = ' WIP';
+              }
               
               // Optionally show project name
               const projectName = task.projectId && projects[task.projectId] 
@@ -1484,6 +1553,34 @@
           }
         });
 
+        // Add missed recurring tasks to their respective projects if enabled
+        const includeMissedRecurring = document.getElementById('includeMissedRecurring').checked;
+        if (includeMissedRecurring) {
+          const missedTasks = getMissedRecurringTasks(allTasks, startDate, endDate, processedTasks);
+          
+          missedTasks.forEach(task => {
+            const projectId = task.projectId || 'no-project';
+            const projectName = projects[projectId] || 'No Project';
+            
+            // Create project entry if it doesn't exist
+            if (!tasksByProject[projectId]) {
+              tasksByProject[projectId] = {
+                name: projectName,
+                tasks: [],
+                totalTime: 0
+              };
+            }
+            
+            // Add missed recurring task to the project
+            tasksByProject[projectId].tasks.push({
+              ...task,
+              isMissedRecurring: true,
+              totalTimeSpent: 0,
+              subtasks: []
+            });
+          });
+        }
+
         // Generate report in Markdown format
         let reportText = `# Task Completion Report\n\n`;
         reportText += `**Date Range:** ${formatDateDisplay(formatDate(startDate))} - ${formatDateDisplay(formatDate(endDate))}  \n`;
@@ -1523,7 +1620,13 @@
             project.tasks.forEach(task => {
               const timeMinutes = Math.round(task.totalTimeSpent / 60000);
               const timeSpent = (document.getElementById('showTimeSpent').checked && timeMinutes > 0) ? ` *(${formatTime(timeMinutes)})*` : '';
-              const statusIndicator = task.isInProgress ? ' WIP' : '';
+              // Show status indicator for in-progress tasks or missed recurring tasks
+              let statusIndicator = '';
+              if (task.isMissedRecurring) {
+                statusIndicator = ' MISSED 🔁';
+              } else if (task.isInProgress) {
+                statusIndicator = ' WIP';
+              }
               
               // For project grouping, don't show dates
               reportText += `- ${task.title}${timeSpent}${statusIndicator}\n`;
@@ -1786,6 +1889,7 @@
         const showDateEl = document.getElementById('showDate');
         const excludeEmptyDatesEl = document.getElementById('excludeEmptyDates');
         const includeNotesEl = document.getElementById('includeNotes');
+        const includeMissedRecurringEl = document.getElementById('includeMissedRecurring');
         const minTimeSpentEl = document.getElementById('minTimeSpent');
         const showTimeSpentEl = document.getElementById('showTimeSpent');
         const showTotalTimeEl = document.getElementById('showTotalTime');
@@ -1795,6 +1899,7 @@
         if (showDateEl) showDateEl.checked = preferences.showDate;
         if (excludeEmptyDatesEl) excludeEmptyDatesEl.checked = preferences.excludeEmptyDates;
         if (includeNotesEl) includeNotesEl.checked = preferences.includeNotes;
+        if (includeMissedRecurringEl) includeMissedRecurringEl.checked = preferences.includeMissedRecurring;
         if (minTimeSpentEl) minTimeSpentEl.value = preferences.minTimeSpent;
         if (showTimeSpentEl) showTimeSpentEl.checked = preferences.showTimeSpent;
         if (showTotalTimeEl) showTotalTimeEl.checked = preferences.showTotalTime;
@@ -1953,6 +2058,7 @@
           preferences.showDate = document.getElementById('showDate').checked;
           preferences.excludeEmptyDates = document.getElementById('excludeEmptyDates').checked;
           preferences.includeNotes = document.getElementById('includeNotes').checked;
+          preferences.includeMissedRecurring = document.getElementById('includeMissedRecurring').checked;
           preferences.minTimeSpent = parseInt(document.getElementById('minTimeSpent').value);
           preferences.showTimeSpent = document.getElementById('showTimeSpent').checked;
           preferences.showTotalTime = document.getElementById('showTotalTime').checked;
