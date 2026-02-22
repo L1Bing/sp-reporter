@@ -181,6 +181,23 @@ describe('Date Range Reporter', () => {
       expect(typeof window.deleteReport).toBe('function');
       expect(typeof window.renderSavedReports).toBe('function');
     });
+
+    it('report textarea should not wrap by default', () => {
+      const modal = document.getElementById('modalReportContent');
+      const style = window.getComputedStyle(modal);
+      expect(style.whiteSpace).toBe('pre');
+      expect(style.overflowX).toBe('auto');
+    });
+
+    it('table sort controls align with columns label', () => {
+      document.getElementById('outputFormat').value = 'table';
+      window.applyPreferences();
+      const sortContainer = document.querySelector('#tableSettingsContainer .input-field');
+      expect(sortContainer).toBeTruthy();
+      const style = window.getComputedStyle(sortContainer);
+      expect(style.display).toBe('flex');
+      expect(style.alignItems).toBe('center');
+    });
   });
 
   describe('Plugin Integration', () => {
@@ -1943,12 +1960,53 @@ describe('Date Range Reporter', () => {
   });
 
   describe('User Preferences', () => {
-    it('should have preferences modal elements', () => {
+    it('should have preferences modal elements and correct order', () => {
       expect(document.getElementById('preferencesModal')).toBeTruthy();
+      // report format should exist and be placed before view organization
+      const reportSection = document.getElementById('reportFormatSection');
+      const viewSection = document.getElementById('viewOrgSection');
+      expect(reportSection).toBeTruthy();
+      // ensure only one report format section exists
+      expect(document.querySelectorAll('#reportFormatSection').length).toBe(1);
+      expect(viewSection).toBeTruthy();
+      const children = Array.from(reportSection.parentNode.children);
+      expect(children.indexOf(reportSection)).toBeLessThan(children.indexOf(viewSection));
+
+      // basic controls
+      expect(document.getElementById('outputFormat')).toBeTruthy();
       expect(document.getElementById('groupBy')).toBeTruthy();
       expect(document.getElementById('showDate')).toBeTruthy();
       expect(document.getElementById('includeNotes')).toBeTruthy();
       expect(document.getElementById('minTimeSpent')).toBeTruthy();
+    });
+
+    it('toggles groupBy visibility when format changes', () => {
+      const output = document.getElementById('outputFormat');
+      const viewSection = document.getElementById('viewOrgSection');
+      // start simple
+      output.value = 'simple';
+      output.dispatchEvent(new Event('change'));
+      expect(viewSection.style.display).not.toBe('none');
+      // switch to table
+      output.value = 'table';
+      output.dispatchEvent(new Event('change'));
+      expect(viewSection.style.display).toBe('none');
+      // back to simple
+      output.value = 'simple';
+      output.dispatchEvent(new Event('change'));
+      expect(viewSection.style.display).not.toBe('none');
+    });
+
+    it('hides non-overdue display options in table mode', () => {
+      const output = document.getElementById('outputFormat');
+      output.value = 'table';
+      output.dispatchEvent(new Event('change'));
+      ['showDate','includeNotes','showTimeSpent','showTotalTime'].forEach(id => {
+        const row = document.getElementById(id).closest('.toggle-row');
+        expect(row.style.display).toBe('none');
+      });
+      const overdueRow = document.getElementById('includeOverdue').closest('.toggle-row');
+      expect(overdueRow.style.display).not.toBe('none');
     });
 
     it('should save preferences with reports', async () => {
@@ -1976,6 +2034,8 @@ describe('Date Range Reporter', () => {
       expect(savedData.preferences).toBeDefined();
       expect(savedData.preferences.groupBy).toBeDefined();
       expect(savedData.preferences.minTimeSpent).toBeDefined();
+      expect(savedData.preferences.outputFormat).toBeDefined();
+      expect(savedData.preferences.showNotesColumn).toBeDefined();
     });
 
     it('should load preferences from storage', async () => {
@@ -2569,18 +2629,24 @@ describe('Date Range Reporter', () => {
     });
   });
 
-  describe('Missed Recurring Tasks', () => {
-    it('should have includeMissedRecurring checkbox', () => {
-      expect(document.getElementById('includeMissedRecurring')).toBeTruthy();
+  describe('Overdue Tasks', () => {
+    it('should have includeOverdue checkbox', () => {
+      expect(document.getElementById('includeOverdue')).toBeTruthy();
     });
 
-    it('should not include missed recurring tasks when option is disabled', async () => {
+    it('should not include overdue tasks when option is disabled', async () => {
       const tasks = [
         {
-          id: 'task-recurring-missed',
-          title: 'Missed Recurring Task',
-          repeatCfgId: 'repeat-1',
-          isDone: false,
+          id: 'task-overdue',
+          title: 'Overdue Task',
+          dueDay: '2024-01-15',
+          timeSpentOnDay: {}
+        },
+        {
+          id: 'task-dueonly',
+          title: 'Due Day Only',
+          // no status, but dueDay should qualify if unchecked later
+          dueDay: '2024-01-15',
           timeSpentOnDay: {}
         },
         {
@@ -2596,37 +2662,35 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
       startInput.value = '2024-01-15';
       endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = false;
+      includeOverdue.checked = false;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      expect(reportText).not.toContain('Missed Recurring Tasks');
-      expect(reportText).not.toContain('Missed Recurring Task');
+      expect(reportText).not.toContain('Overdue Task');
+      expect(reportText).not.toContain('Due Day Only');
       expect(reportText).toContain('Completed Task');
     });
 
-    it('should include missed recurring tasks when option is enabled', async () => {
+    it('should include overdue tasks when option is enabled and only on planned date', async () => {
       const tasks = [
         {
-          id: 'task-recurring-missed',
-          title: 'Missed Recurring Task',
-          repeatCfgId: 'repeat-1',
-          isDone: false,
+          id: 'task-overdue',
+          title: 'Overdue Task',
+          dueDay: '2024-01-16',
           timeSpentOnDay: {}
         },
         {
-          id: 'task-completed',
-          title: 'Completed Task',
-          isDone: true,
-          doneOn: new Date('2024-01-15T14:00:00').getTime(),
-          timeSpentOnDay: { '2024-01-15': 3600000 }
+          id: 'task-dueday',
+          title: 'Due Day Only Overdue',
+          dueDay: '2024-01-16',
+          timeSpentOnDay: {}
         }
       ];
 
@@ -2634,31 +2698,42 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
       startInput.value = '2024-01-15';
-      endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      endInput.value = '2024-01-17';
+      includeOverdue.checked = true;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      expect(reportText).toContain('Missed Recurring Task');
-      expect(reportText).toContain('MISSED 🔁');
-      expect(reportText).toContain('Completed Task');
+      // Each task appears once on its relevant date
+      expect(reportText.match(/Overdue Task/g)?.length).toBe(1);
+      expect(reportText).toContain('Overdue Task');
+      expect(reportText.match(/Due Day Only Overdue/g)?.length).toBe(1);
+      expect(reportText).toContain('Due Day Only Overdue');
+      expect(reportText).toContain('OVERDUE ⚠️');
     });
 
-    it('should not include recurring tasks that were completed in date range', async () => {
+    it('should not show overdue tasks created after range or deleted before range', async () => {
       const tasks = [
         {
-          id: 'task-recurring-completed',
-          title: 'Completed Recurring Task',
-          repeatCfgId: 'repeat-1',
-          isDone: true,
-          doneOn: new Date('2024-01-15T14:00:00').getTime(),
-          timeSpentOnDay: { '2024-01-15': 3600000 }
+          id: 'late-task',
+          title: 'Late Overdue',
+          dueDay: '2024-01-05',
+          // created after report range
+          createdAt: new Date('2024-01-21T00:00:00').getTime(),
+          timeSpentOnDay: {}
+        },
+        {
+          id: 'early-task',
+          title: 'Early Overdue',
+          dueDay: '2024-01-05',
+          // deleted before report range
+          deletedAt: new Date('2023-12-31T00:00:00').getTime(),
+          timeSpentOnDay: {}
         }
       ];
 
@@ -2666,30 +2741,35 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
-      startInput.value = '2024-01-15';
-      endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      startInput.value = '2024-01-01';
+      endInput.value = '2024-01-20';
+      includeOverdue.checked = true;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      // Should not have MISSED indicator
-      expect(reportText).not.toContain('MISSED 🔁');
-      // Should be in regular tasks
-      expect(reportText).toContain('Completed Recurring Task');
+      expect(reportText).not.toContain('Late Overdue');
+      expect(reportText).not.toContain('Early Overdue');
     });
 
-    it('should not include recurring tasks that had work logs in date range', async () => {
+    it('should not include tasks marked overdue if completed or worked on in range', async () => {
       const tasks = [
         {
-          id: 'task-recurring-wip',
-          title: 'WIP Recurring Task',
-          repeatCfgId: 'repeat-1',
-          isDone: false,
+          id: 'task-overdue-completed',
+          title: 'Completed Overdue Task',
+          dueDay: '2024-01-15',
+          isDone: true,
+          doneOn: new Date('2024-01-15T10:00:00').getTime(),
+          timeSpentOnDay: { '2024-01-15': 3600000 }
+        },
+        {
+          id: 'task-overdue-wip',
+          title: 'WIP Overdue Task',
+          dueDay: '2024-01-15',
           timeSpentOnDay: { '2024-01-15': 3600000 }
         }
       ];
@@ -2698,32 +2778,30 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
       startInput.value = '2024-01-15';
       endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      includeOverdue.checked = true;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      // Should not have MISSED indicator
-      expect(reportText).not.toContain('MISSED 🔁');
-      // Should be in regular tasks with WIP
-      expect(reportText).toContain('WIP Recurring Task');
+      expect(reportText).not.toContain('OVERDUE ⚠️');
+      expect(reportText).toContain('Completed Overdue Task');
+      expect(reportText).toContain('WIP Overdue Task');
       expect(reportText).toContain('WIP');
     });
 
-    it('should show project names for missed recurring tasks', async () => {
+    it('should show project names for overdue tasks', async () => {
       const tasks = [
         {
-          id: 'task-recurring-missed',
-          title: 'Missed Recurring Task',
-          repeatCfgId: 'repeat-1',
+          id: 'task-overdue',
+          title: 'Overdue Task',
           projectId: 'project-1',
-          isDone: false,
+          dueDay: '2024-01-15',
           timeSpentOnDay: {}
         }
       ];
@@ -2735,37 +2813,35 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
       startInput.value = '2024-01-15';
       endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      includeOverdue.checked = true;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      expect(reportText).toContain('Missed Recurring Task [Test Project]');
-      expect(reportText).toContain('MISSED 🔁');
+      expect(reportText).toContain('Overdue Task [Test Project]');
+      expect(reportText).toContain('OVERDUE ⚠️');
     });
 
-    it('should exclude missed recurring tasks from excluded projects', async () => {
+    it('should exclude overdue tasks from excluded projects', async () => {
       const tasks = [
         {
-          id: 'task-recurring-excluded',
-          title: 'Excluded Recurring Task',
-          repeatCfgId: 'repeat-1',
+          id: 'task-overdue-excluded',
+          title: 'Excluded Overdue Task',
           projectId: 'excluded-project',
-          isDone: false,
+          dueDay: '2024-01-15',
           timeSpentOnDay: {}
         },
         {
-          id: 'task-recurring-included',
-          title: 'Included Recurring Task',
-          repeatCfgId: 'repeat-2',
+          id: 'task-overdue-included',
+          title: 'Included Overdue Task',
           projectId: 'included-project',
-          isDone: false,
+          dueDay: '2024-01-15',
           timeSpentOnDay: {}
         }
       ];
@@ -2790,29 +2866,28 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       
       startInput.value = '2024-01-15';
       endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      includeOverdue.checked = true;
 
       await window.generateReport();
 
       const modalContent = document.getElementById('modalReportContent');
       const reportText = modalContent.value;
       
-      expect(reportText).toContain('Included Recurring Task');
-      expect(reportText).not.toContain('Excluded Recurring Task');
+      expect(reportText).toContain('Included Overdue Task');
+      expect(reportText).not.toContain('Excluded Overdue Task');
     });
 
     it('should work with both grouping modes', async () => {
       const tasks = [
         {
-          id: 'task-recurring-missed',
-          title: 'Missed Recurring Task',
-          repeatCfgId: 'repeat-1',
+          id: 'task-overdue',
+          title: 'Overdue Task',
           projectId: 'project-1',
-          isDone: false,
+          dueDay: '2024-01-15',
           timeSpentOnDay: {}
         }
       ];
@@ -2824,12 +2899,12 @@ describe('Date Range Reporter', () => {
 
       const startInput = document.getElementById('startDate');
       const endInput = document.getElementById('endDate');
-      const includeMissedRecurring = document.getElementById('includeMissedRecurring');
+      const includeOverdue = document.getElementById('includeOverdue');
       const groupBy = document.getElementById('groupBy');
       
       startInput.value = '2024-01-15';
       endInput.value = '2024-01-15';
-      includeMissedRecurring.checked = true;
+      includeOverdue.checked = true;
 
       // Test with date grouping
       groupBy.value = 'date';
@@ -2838,8 +2913,8 @@ describe('Date Range Reporter', () => {
       let modalContent = document.getElementById('modalReportContent');
       let reportText = modalContent.value;
       
-      expect(reportText).toContain('Missed Recurring Task');
-      expect(reportText).toContain('MISSED 🔁');
+      expect(reportText).toContain('Overdue Task');
+      expect(reportText).toContain('OVERDUE ⚠️');
 
       // Test with project grouping
       groupBy.value = 'project';
@@ -2848,8 +2923,204 @@ describe('Date Range Reporter', () => {
       modalContent = document.getElementById('modalReportContent');
       reportText = modalContent.value;
       
-      expect(reportText).toContain('Missed Recurring Task');
-      expect(reportText).toContain('MISSED 🔁');
+      expect(reportText).toContain('Overdue Task');
+      expect(reportText).toContain('OVERDUE ⚠️');
+    });
+  });
+
+  describe('Report Format - Table output', () => {
+    it('filters out completely empty rows when building table rows', () => {
+      const cols = ['date','project','title','time','status','notes'];
+      const headerLabel = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', notes: 'Notes' };
+
+      // single blank entry should be treated as no tasks
+      let groups = { All: [{ date: '', project: '', title: '', timeMinutes: 0, status: '', notes: '' }] };
+      let text = window.renderTableRows(groups, cols, false, headerLabel);
+      expect(text).toContain('*No tasks*');
+      expect(text).not.toMatch(/\|/); // no table at all
+
+      // mixed with a valid entry: blank row removed, valid row kept
+      groups = {
+        All: [
+          { date: '', project: '', title: '', timeMinutes: 0, status: '', notes: '' },
+          { date: '2024-01-01', project: 'X', title: 'Y', timeMinutes: 30, status: 'WIP', notes: '' }
+        ]
+      };
+      text = window.renderTableRows(groups, cols, true, headerLabel);
+      expect(text).toContain('Y');
+      // should not add an empty '|   |   |' line
+      const lines = text.split('\n').filter(l => l.startsWith('|'));
+      // ignore separator rows that consist of dashes
+      const nonSeparator = lines.filter(l => !/^\|\s*-/.test(l));
+      // should only be header + one data row
+      expect(nonSeparator).toHaveLength(2);
+    });
+
+    it('generates markdown table when outputFormat is table', async () => {
+      const tasks = [
+        {
+          id: 'task-1',
+          title: 'Table Task',
+          isDone: true,
+          doneOn: new Date('2024-01-15T14:00:00').getTime(),
+          notes: 'Note line',
+          timeSpentOnDay: { '2024-01-15': 7200000 }
+        }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      document.getElementById('outputFormat').value = 'table';
+      document.getElementById('startDate').value = '2024-01-15';
+      document.getElementById('endDate').value = '2024-01-15';
+
+      await window.generateReport();
+
+      const reportText = document.getElementById('modalReportContent').value;
+      // header cells should appear in order regardless of padding
+      expect(reportText).toMatch(/\|\s*Date\s*\|\s*Project\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Notes\s*\|/);
+      expect(reportText).toContain('Table Task');
+      expect(reportText).toContain('2h');
+      expect(reportText).toContain('Note line');
+      // there should be no rows consisting solely of pipes/spaces
+      const emptyRowRegex = /^\|\s*(\|\s*)+$/;
+      reportText.split('\n').forEach(l => {
+        expect(l).not.toMatch(emptyRowRegex);
+      });
+
+      // grouping controls should not affect table view
+      // simulate toggling groupBy even though it's hidden
+      document.getElementById('groupBy').value = 'project';
+      await window.generateReport();
+      const secondReport = document.getElementById('modalReportContent').value;
+      // header row should still only appear once
+      const headerCount = (secondReport.match(/\|\s*Date\s*\|\s*Project\s*\|/) || []).length;
+      expect(headerCount).toBe(1);
+    });
+
+    it('includes overdue tasks in table output using dueDay', async () => {
+      const tasks = [
+        {
+          id: 'overdue-table',
+          title: 'Table Overdue',
+          dueDay: '2024-01-16',
+          timeSpentOnDay: {}
+        }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      document.getElementById('outputFormat').value = 'table';
+      document.getElementById('includeOverdue').checked = true;
+      document.getElementById('startDate').value = '2024-01-16';
+      document.getElementById('endDate').value = '2024-01-16';
+
+      await window.generateReport();
+
+      const reportText = document.getElementById('modalReportContent').value;
+      expect(reportText).toContain('Tuesday, January 16, 2024');
+      expect(reportText).toContain('Table Overdue');
+      expect(reportText).toContain('OVERDUE');
+    });
+
+    it('respects column order preference and columns align even if notes previously removed', async () => {
+      // simulate user removed notes earlier
+      window.preferences.tableColumns = ['project','date','title','time','status'];
+      window.applyPreferences();
+
+      // re-add notes column by preference
+      window.preferences.tableColumns.push('notes');
+      // preferences updated above
+      const tasks = [
+        {
+          id: 'task-2',
+          title: 'Ordered Task',
+          isDone: true,
+          doneOn: new Date('2024-01-15T12:00:00').getTime(),
+          timeSpentOnDay: { '2024-01-15': 3600000 }
+        }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      document.getElementById('outputFormat').value = 'table';
+      document.getElementById('startDate').value = '2024-01-15';
+      document.getElementById('endDate').value = '2024-01-15';
+
+      await window.generateReport();
+
+      const reportText = document.getElementById('modalReportContent').value;
+      // header cells appear in configured order regardless of padding
+      expect(reportText).toMatch(/\|\s*Project\s*\|\s*Date\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Notes\s*\|/);
+      // verify that all rows have the same number of columns and bar positions
+      const lines = reportText.split('\n').filter(l => l.startsWith('|'));
+      const barIndexes = lines[0].split('').map((ch,i)=> ch==='|'?i:-1).filter(i=>i>=0);
+      lines.forEach(line => {
+        barIndexes.forEach(idx => {
+          expect(line[idx]).toBe('|');
+        });
+      });
+    });
+
+    // the explicit "groups by date" test is no longer relevant; table mode ignores grouping
+
+    it('toggling showNotesColumn hides or shows Notes column in table output', async () => {
+      const tasks = [
+        { id: 't3', title: 'NoNotes', isDone: true, doneOn: new Date('2024-01-15T12:00:00').getTime(), notes: 'secret', timeSpentOnDay: { '2024-01-15': 3600000 } }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      document.getElementById('outputFormat').value = 'table';
+      // ensure columns list is rendered
+      window.renderTableColumnsUI();
+      // hide notes column via toggle inside list
+      const list = document.getElementById('tableColumnsList');
+      let notesToggle = list.querySelector('li[data-key="notes"] input.notes-toggle');
+      expect(notesToggle).toBeTruthy();
+      notesToggle.checked = false;
+      notesToggle.dispatchEvent(new Event('change'));
+
+      document.getElementById('startDate').value = '2024-01-15';
+      document.getElementById('endDate').value = '2024-01-15';
+
+      await window.generateReport();
+      let reportText = document.getElementById('modalReportContent').value;
+      expect(reportText).not.toMatch(/\|\s*Notes\s*\|/);
+      expect(reportText).not.toContain('secret');
+
+      // enable notes column (re-query toggle after re-render)
+      notesToggle = list.querySelector('li[data-key="notes"] input[type="checkbox"]');
+      expect(notesToggle).toBeTruthy();
+      notesToggle.checked = true;
+      notesToggle.dispatchEvent(new Event('change'));
+      await window.generateReport();
+      reportText = document.getElementById('modalReportContent').value;
+      expect(reportText).toMatch(/\|\s*Notes\s*\|/);
+      expect(reportText).toContain('secret');
+
+      // when switching back to simple view the groupBy section should reappear
+      document.getElementById('outputFormat').value = 'simple';
+      window.applyPreferences();
+      const viewSection = document.getElementById('viewOrgSection');
+      expect(viewSection.style.display).not.toBe('none');
+    });
+
+    it('sorts by time desc when configured', async () => {
+      const tasks = [
+        { id: 'big', title: 'Big Task', isDone: true, doneOn: new Date('2024-01-15T12:00:00').getTime(), timeSpentOnDay: { '2024-01-15': 7200000 } },
+        { id: 'small', title: 'Small Task', isDone: true, doneOn: new Date('2024-01-15T13:00:00').getTime(), timeSpentOnDay: { '2024-01-15': 1800000 } }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      document.getElementById('outputFormat').value = 'table';
+      document.getElementById('tableSortColumn').value = 'time';
+      document.getElementById('tableSortDirection').value = 'desc';
+      document.getElementById('startDate').value = '2024-01-15';
+      document.getElementById('endDate').value = '2024-01-15';
+
+      await window.generateReport();
+
+      const reportText = document.getElementById('modalReportContent').value;
+      const firstIndex = reportText.indexOf('Big Task');
+      const secondIndex = reportText.indexOf('Small Task');
+      expect(firstIndex).toBeLessThan(secondIndex);
     });
   });
 });
