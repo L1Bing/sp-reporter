@@ -832,6 +832,7 @@
                   <option value="title">Task Title</option>
                   <option value="time">Time Spent</option>
                   <option value="status">Status</option>
+                  <option value="tags">Tags</option>
                 </select>
 
                 <label for="tableSortDirection" style="margin:0 0 0 12px;">Direction</label>
@@ -1048,7 +1049,7 @@
         excludedProjects: [],
         // Table / output settings (new)
         outputFormat: 'simple', // 'simple' | 'table'
-        tableColumns: ['date','project','title','time','status','notes'],
+        tableColumns: ['date','project','title','time','status','tags','notes'],
         tableSort: { column: 'date', direction: 'asc' }
       };
 
@@ -1790,18 +1791,29 @@
           } catch (e) {
             console.warn('Could not load projects:', e);
           }
-          
+
+          // Get all tags to map tagId to tag name
+          const tags = {};
+          try {
+            const allTagsList = await PluginAPI.getAllTags();
+            allTagsList.forEach(tag => {
+              tags[tag.id] = tag.title;
+            });
+          } catch (e) {
+            console.warn('Could not load tags:', e);
+          }
+
           // Combine all tasks
           const allTasks = [...archivedTasks, ...activeTasks];
 
           const outputFormat = document.getElementById('outputFormat')?.value || (preferences.outputFormat || 'simple');
           const groupBy = document.getElementById('groupBy').value;
-          
+
           let reportText = '';
           let totalTasks = 0;
 
           if (outputFormat === 'table') {
-            const result = generateReportAsTable(allTasks, startDate, endDate, projects);
+            const result = generateReportAsTable(allTasks, startDate, endDate, projects, tags);
             reportText = result.reportText;
             totalTasks = result.totalTasks;
           } else if (groupBy === 'date') {
@@ -2044,12 +2056,12 @@
         const list = document.getElementById('tableColumnsList');
         if (!list) return;
 
-        const defaultCols = ['date','project','title','time','status','notes'];
+        const defaultCols = ['date','project','title','time','status','tags','notes'];
         // start with saved order or defaults
         let cols = (preferences.tableColumns && Array.isArray(preferences.tableColumns)) ? preferences.tableColumns.slice() : defaultCols.slice();
         // ensure defaults are always available (user might remove notes but want to re-add later)
         defaultCols.forEach(c => { if (!cols.includes(c)) cols.push(c); });
-        const labels = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', notes: 'Notes' };
+        const labels = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', tags: 'Tags', notes: 'Notes' };
 
         list.innerHTML = '';
         cols.forEach(key => {
@@ -2129,7 +2141,7 @@
 
       function getTableColumnsOrder() {
         const list = document.getElementById('tableColumnsList');
-        if (!list) return preferences.tableColumns || ['date','project','title','time','status','notes'];
+        if (!list) return preferences.tableColumns || ['date','project','title','time','status','tags','notes'];
         return Array.from(list.children).map(li => li.dataset.key);
       }
 
@@ -2164,7 +2176,8 @@
             const timeText = (showTimeSpent && r.timeMinutes) ? formatTime(r.timeMinutes) : (showTimeSpent ? '0m' : '');
             const status = r.status || '';
             const notes = escapeCell(r.notes || '');
-            const otherFieldsEmpty = [dateText, proj, title, status, notes]
+            const tags = escapeCell(r.tags || '');
+            const otherFieldsEmpty = [dateText, proj, title, status, notes, tags]
               .every(v => !v || v.trim() === '' || v === 'Invalid Date');
             const timeEmpty = !showTimeSpent || r.timeMinutes === 0;
             const allEmpty = otherFieldsEmpty && timeEmpty;
@@ -2184,6 +2197,7 @@
               if (c === 'title') return r.title;
               if (c === 'time') return (showTimeSpent && r.timeMinutes) ? formatTime(r.timeMinutes) : (showTimeSpent ? '0m' : '');
               if (c === 'status') return r.status || '';
+              if (c === 'tags') return escapeCell(r.tags || '');
               if (c === 'notes') return escapeCell(r.notes || '');
               return '';
             });
@@ -2209,6 +2223,7 @@
               else if (c === 'title') val = r.title;
               else if (c === 'time') val = (showTimeSpent && r.timeMinutes) ? formatTime(r.timeMinutes) : (showTimeSpent ? '0m' : '');
               else if (c === 'status') val = r.status || '';
+              else if (c === 'tags') val = escapeCell(r.tags || '');
               else if (c === 'notes') val = escapeCell(r.notes || '');
               return padded(val, widths[i]);
             });
@@ -2223,7 +2238,7 @@
         return text;
       }
 
-      function generateReportAsTable(allTasks, startDate, endDate, projects) {
+      function generateReportAsTable(allTasks, startDate, endDate, projects, tags) {
         const minTimeMs = parseInt(document.getElementById('minTimeSpent').value) * 60000;
         // const includeNotes = document.getElementById('includeNotes').checked; // not used in table logic
         const showTimeSpent = document.getElementById('showTimeSpent').checked;
@@ -2235,11 +2250,15 @@
         const processedTaskIds = new Set();
         const entries = [];
 
+        function getTaskTags(task) {
+          return (task.tagIds || []).map(id => tags[id]).filter(Boolean).join(', ');
+        }
+
         function pushEntry(payload) {
           // ignore bogus entries that don't contain any useful information
           if (!payload) return;
           const hasContent = payload.date || payload.project || payload.title ||
-                             payload.status || payload.notes || payload.timeMinutes;
+                             payload.status || payload.notes || payload.timeMinutes || payload.tags;
           if (!hasContent) return;
 
           entries.push(payload);
@@ -2262,24 +2281,24 @@
               workLogsInRange.forEach(workLogDate => {
                 const timeMinutes = Math.round((task.timeSpentOnDay && task.timeSpentOnDay[workLogDate] ? task.timeSpentOnDay[workLogDate] / 60000 : 0));
                 const status = workLogDate !== taskDateStr ? 'WIP' : 'DONE';
-                pushEntry({ date: workLogDate, project: projects[task.projectId] || '', title: task.title, timeMinutes, status, notes: task.notes || '', taskId: task.id });
+                pushEntry({ date: workLogDate, project: projects[task.projectId] || '', title: task.title, timeMinutes, status, tags: getTaskTags(task), notes: task.notes || '', taskId: task.id });
 
                 const filteredSubtasks = filterSubtasksForReport(subtasks, formatDate(startDate), formatDate(endDate), minTimeMs);
                 filteredSubtasks.forEach(subtask => {
                   const subDate = subtask.workLogDate || workLogDate;
                   const subTimeMinutes = subtask.timeSpentOnDay && subtask.timeSpentOnDay[subDate] ? Math.round(subtask.timeSpentOnDay[subDate] / 60000) : 0;
-                  pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : (subtask.isDone ? 'DONE' : ''), notes: subtask.notes || '', taskId: task.id });
+                  pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : (subtask.isDone ? 'DONE' : ''), tags: getTaskTags(subtask), notes: subtask.notes || '', taskId: task.id });
                 });
               });
             } else if ((taskDateStr >= formatDate(startDate) && taskDateStr <= formatDate(endDate)) || subtasksWithLogsInRange.length > 0) {
               const timeMinutes = (task.timeSpentOnDay && task.timeSpentOnDay[taskDateStr]) ? Math.round(task.timeSpentOnDay[taskDateStr] / 60000) : 0;
-              pushEntry({ date: taskDateStr, project: projects[task.projectId] || '', title: task.title, timeMinutes, status: 'DONE', notes: task.notes || '', taskId: task.id });
+              pushEntry({ date: taskDateStr, project: projects[task.projectId] || '', title: task.title, timeMinutes, status: 'DONE', tags: getTaskTags(task), notes: task.notes || '', taskId: task.id });
 
               const filteredSubtasks = filterSubtasksForReport(subtasks, formatDate(startDate), formatDate(endDate), minTimeMs);
               filteredSubtasks.forEach(subtask => {
                 const subDate = subtask.workLogDate || taskDateStr;
                 const subTimeMinutes = subtask.timeSpentOnDay && subtask.timeSpentOnDay[subDate] ? Math.round(subtask.timeSpentOnDay[subDate] / 60000) : 0;
-                pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : (subtask.isDone ? 'DONE' : ''), notes: subtask.notes || '', taskId: task.id });
+                pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : (subtask.isDone ? 'DONE' : ''), tags: getTaskTags(subtask), notes: subtask.notes || '', taskId: task.id });
               });
             }
           } else if (hasWorkLogs || subtasksWithLogsInRange.length > 0) {
@@ -2287,7 +2306,7 @@
               Object.keys(task.timeSpentOnDay).forEach(workLogDate => {
                 if (workLogDate >= formatDate(startDate) && workLogDate <= formatDate(endDate) && task.timeSpentOnDay[workLogDate] >= minTimeMs) {
                   const timeMinutes = Math.round(task.timeSpentOnDay[workLogDate] / 60000);
-                  pushEntry({ date: workLogDate, project: projects[task.projectId] || '', title: task.title, timeMinutes, status: 'WIP', notes: task.notes || '', taskId: task.id });
+                  pushEntry({ date: workLogDate, project: projects[task.projectId] || '', title: task.title, timeMinutes, status: 'WIP', tags: getTaskTags(task), notes: task.notes || '', taskId: task.id });
                 }
               });
             }
@@ -2298,7 +2317,7 @@
                 Object.keys(subtask.timeSpentOnDay).forEach(subDate => {
                   if (subDate >= formatDate(startDate) && subDate <= formatDate(endDate) && subtask.timeSpentOnDay[subDate] >= minTimeMs) {
                     const subTimeMinutes = Math.round(subtask.timeSpentOnDay[subDate] / 60000);
-                    pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : '', notes: subtask.notes || '', taskId: task.id });
+                    pushEntry({ date: subDate, project: projects[subtask.projectId] || projects[task.projectId] || '', title: '↳ ' + subtask.title, timeMinutes: subTimeMinutes, status: subtask.isInProgress ? 'WIP' : '', tags: getTaskTags(subtask), notes: subtask.notes || '', taskId: task.id });
                   }
                 });
               }
@@ -2314,7 +2333,7 @@
               // choose dueDay first if present, else fallback to plannedAt
               let dateKey = task.dueDay || (task.plannedAt ? formatDate(new Date(task.plannedAt)) : null);
               if (dateKey) {
-                pushEntry({ date: dateKey, project: projects[task.projectId] || '', title: task.title, timeMinutes: 0, status: 'OVERDUE', notes: task.notes || '', taskId: task.id });
+                pushEntry({ date: dateKey, project: projects[task.projectId] || '', title: task.title, timeMinutes: 0, status: 'OVERDUE', tags: getTaskTags(task), notes: task.notes || '', taskId: task.id });
               }
             });
           }
@@ -2333,12 +2352,13 @@
           else if (sortColumn === 'title') res = a.title.localeCompare(b.title);
           else if (sortColumn === 'time') res = (a.timeMinutes || 0) - (b.timeMinutes || 0);
           else if (sortColumn === 'status') res = (a.status || '').localeCompare(b.status || '');
+          else if (sortColumn === 'tags') res = (a.tags || '').localeCompare(b.tags || '');
           return sortDirection === 'asc' ? res : -res;
         };
         Object.keys(groups).forEach(k => groups[k].sort(comparator));
 
         // Build columns list from saved preferences or default order
-        const defaultCols = ['date','project','title','time','status','notes'];
+        const defaultCols = ['date','project','title','time','status','tags','notes'];
         let requestedCols = (preferences.tableColumns && Array.isArray(preferences.tableColumns))
           ? preferences.tableColumns.slice()
           : defaultCols.slice();
@@ -2346,7 +2366,7 @@
         defaultCols.forEach(c => { if (!requestedCols.includes(c)) requestedCols.push(c); });
         // respect showNotesColumn preference when generating table
         const cols = requestedCols.filter(c => c !== 'notes' || preferences.showNotesColumn !== false);
-        const headerLabel = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', notes: 'Notes' };
+        const headerLabel = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', tags: 'Tags', notes: 'Notes' };
 
         // Build markdown table output header (rest of rows handled by helper)
         let reportText = `# Task Completion Report\n\n`;

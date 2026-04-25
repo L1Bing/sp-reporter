@@ -20,6 +20,7 @@ describe('Date Range Reporter', () => {
       getTasks: vi.fn().mockResolvedValue([]),
       getArchivedTasks: vi.fn().mockResolvedValue([]),
       getAllProjects: vi.fn().mockResolvedValue([]),
+      getAllTags: vi.fn().mockResolvedValue([]),
       persistDataSynced: vi.fn().mockResolvedValue(undefined),
       loadSyncedData: vi.fn().mockResolvedValue(null),
       showSnack: vi.fn(),
@@ -3088,8 +3089,8 @@ describe('Date Range Reporter', () => {
 
   describe('Report Format - Table output', () => {
     it('filters out completely empty rows when building table rows', () => {
-      const cols = ['date','project','title','time','status','notes'];
-      const headerLabel = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', notes: 'Notes' };
+      const cols = ['date','project','title','time','status','tags','notes'];
+      const headerLabel = { date: 'Date', project: 'Project', title: 'Task Title', time: 'Time Spent', status: 'Status', tags: 'Tags', notes: 'Notes' };
 
       // single blank entry should be treated as no tasks
       let groups = { All: [{ date: '', project: '', title: '', timeMinutes: 0, status: '', notes: '' }] };
@@ -3135,7 +3136,7 @@ describe('Date Range Reporter', () => {
 
       const reportText = document.getElementById('modalReportContent').value;
       // header cells should appear in order regardless of padding
-      expect(reportText).toMatch(/\|\s*Date\s*\|\s*Project\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Notes\s*\|/);
+      expect(reportText).toMatch(/\|\s*Date\s*\|\s*Project\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Tags\s*\|\s*Notes\s*\|/);
       expect(reportText).toContain('Table Task');
       expect(reportText).toContain('2h');
       expect(reportText).toContain('Note line');
@@ -3153,6 +3154,35 @@ describe('Date Range Reporter', () => {
       // header row should still only appear once
       const headerCount = (secondReport.match(/\|\s*Date\s*\|\s*Project\s*\|/) || []).length;
       expect(headerCount).toBe(1);
+    });
+
+    it('includes tags column in table output when tasks have tagIds', async () => {
+      const tasks = [
+        {
+          id: 'task-tags',
+          title: 'Tagged Task',
+          isDone: true,
+          doneOn: new Date('2024-01-15T14:00:00').getTime(),
+          tagIds: ['tag-1', 'tag-2'],
+          timeSpentOnDay: { '2024-01-15': 3600000 }
+        }
+      ];
+
+      mockPluginAPI.getTasks.mockResolvedValue(tasks);
+      mockPluginAPI.getAllTags.mockResolvedValue([
+        { id: 'tag-1', title: 'bug' },
+        { id: 'tag-2', title: 'urgent' }
+      ]);
+      document.getElementById('outputFormat').value = 'table';
+      document.getElementById('startDate').value = '2024-01-15';
+      document.getElementById('endDate').value = '2024-01-15';
+
+      await window.generateReport();
+
+      const reportText = document.getElementById('modalReportContent').value;
+      expect(reportText).toContain('Tags');
+      expect(reportText).toContain('bug');
+      expect(reportText).toContain('urgent');
     });
 
     it('includes overdue tasks in table output using dueDay', async () => {
@@ -3206,7 +3236,7 @@ describe('Date Range Reporter', () => {
 
       const reportText = document.getElementById('modalReportContent').value;
       // header cells appear in configured order regardless of padding
-      expect(reportText).toMatch(/\|\s*Project\s*\|\s*Date\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Notes\s*\|/);
+      expect(reportText).toMatch(/\|\s*Project\s*\|\s*Date\s*\|\s*Task Title\s*\|\s*Time Spent\s*\|\s*Status\s*\|\s*Notes\s*\|\s*Tags\s*\|/);
       // verify that all rows have the same number of columns and bar positions
       const lines = reportText.split('\n').filter(l => l.startsWith('|'));
       const barIndexes = lines[0].split('').map((ch,i)=> ch==='|'?i:-1).filter(i=>i>=0);
